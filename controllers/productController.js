@@ -1,0 +1,221 @@
+import { Product } from "../models/Product.js";
+import fs from "fs"
+import mongoose from "mongoose"
+
+
+export const getProducts = async (req, res) => {
+
+  try {
+    const excludeObj = ['sort', 'page', 'search', 'fields', 'limit'];
+
+    const queryObj = { ...req.query };
+
+    excludeObj.forEach((q) => {
+      delete queryObj[q]
+    });
+
+    if (req.query.search) {
+      queryObj.title = { $regex: req.query.search, $options: 'i' }
+    }
+
+    let qStr = JSON.stringify(queryObj);
+    qStr = qStr.replace(/\b(gte|gt|lte|lt|eq)\b/g, match => `$${match}`);
+
+    let query = Product.find(JSON.parse(qStr));
+
+
+    if (req.query.sort) {
+      const sorting = req.query.sort.split(',').join('').trim().split(/[\s,\t,\n]+/).join(' ');
+      query.sort(sorting);
+    }
+
+    if (req.query.fields) {
+      const fields = req.query.fields.split(',').join('').trim().split(/[\s,\t,\n]+/).join(' ');
+      query.select(fields);
+    }
+
+    const page = req.query.page || 1;
+    const limit = req.query.limit || 10;
+
+    const skip = (page - 1) * limit;
+
+
+    const products = await query.skip(skip).limit(limit);
+
+    return res.status(200).json(products);
+  } catch (err) {
+    return res.status(400).json({ message: `${err}` });
+  }
+}
+
+
+export const getProductById = async (req, res) => {
+
+  const { id } = req.params;
+
+  try {
+
+    const product = await Product.findById(id).select('-createdAt -updatedAt -__v').populate({
+      path: 'reviews.user',
+      select: 'fullname email'
+    });
+    return res.status(200).json(product);
+  } catch (err) {
+    return res.status(400).json({ message: `${err}` })
+
+  }
+}
+
+
+export const addProducts = async (req, res) => {
+
+  const { title, brand, category, description, price, stock } = req.body;
+
+  console.log(req.imagePath)
+  try {
+    await Product.create({
+      title,
+      brand,
+      category,
+      description,
+      image: req.imagePath,
+      price: Number(price),
+      stock: Number(stock),
+    });
+
+    return res.status(200).json({
+      message: "Product Added Successfully"
+    });
+  } catch (err) {
+    fs.unlinkSync(`.${req.imagePath}`, (err) => {
+      console.log(err);
+    })
+    return res.status(400).json({ message: `${err}` })
+
+  }
+}
+
+
+export const updateProduct = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+
+    if (mongoose.isValidObjectId(id)) {
+      const isExist = await Product.findById(id);
+      if (isExist) {
+        const updateObj = {
+          title: req.body.title || isExist.title,
+          brand: req.body.brand || isExist.brand,
+          category: req.body.category || isExist.category,
+          description: req.body.description || isExist.description,
+          stock: Number(req.body.stock) || isExist.stock,
+          price: Number(req.body.price) || isExist.price,
+        };
+        if (req.imagePath) {
+          await isExist.updateOne({
+            ...updateObj,
+            image: req.imagePath
+          });
+          fs.unlink(`.${isExist.image}`, (err) => {
+
+          });
+        } else {
+          await isExist.updateOne(updateObj);
+        }
+
+
+        return res.status(200).json({ message: 'succesfully updated' });
+      }
+
+    }
+
+    if (req.imagePath) fs.unlink(`.${req.imagePath}`, (err) => {
+
+    });
+    return res.status(400).json({ message: 'please provide valid id' });
+
+
+
+  } catch (err) {
+    if (req.imagePath) fs.unlink(`.${req.imagePath}`, (err) => {
+
+    });
+    return res.status(400).json({ message: `${err}` });
+  }
+}
+
+
+export const removeProduct = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+
+    if (mongoose.isValidObjectId(id)) {
+      const isExist = await Product.findById(id);
+      console.log(isExist)
+      if (isExist) {
+
+        await Product.findByIdAndDelete(id);
+        fs.unlink(`.${isExist.image}`, (err) => {
+
+        });
+
+        return res.status(200).json({ message: "Successfully Deleted" });
+
+      }
+
+    }
+
+
+    return res.status(400).json({ message: "Please provide valid id" })
+
+  } catch (err) {
+    // fs.unlinkSync(`.${req.imagePath}`, (err) => {
+    //   console.log(err);
+    // })
+    return res.status(400).json({ message: `${err}` })
+
+  }
+}
+
+export const addReview = async (req, res) => {
+  const { id } = req.params;
+  const { rating, comment } = req.body;
+
+  try {
+    if (mongoose.isValidObjectId(id)) {
+      const isExist = await Product.findById(id);
+      if (isExist) {
+
+        // check if review already submitted
+        if (isExist.reviews.find((rev) => rev.user.toString() === req.userId)) {
+          return res.status(400).json({ message: 'you already submitted a review' });
+        }
+
+
+        const review = {
+          user: req.userId,
+          rating: Number(rating),
+          comment
+        }
+        // add review
+        isExist.reviews.push(review);
+
+        // calculate avg rating
+        const totalRating = isExist.reviews.reduce((prev, item) => prev + item.rating, 0);
+        const avg = totalRating / isExist.reviews.length;
+        isExist.rating = avg;
+
+        // save
+        await isExist.save();
+
+        return res.status(200).json({ message: 'review added successfully' });
+      }
+    }
+    return res.status(400).json({ message: 'please provide valid id' });
+  } catch (err) {
+    return res.status(400).json({ message: `${err}` });
+  }
+}
+
