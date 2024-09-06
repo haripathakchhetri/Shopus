@@ -20,7 +20,7 @@ mongoose.connect('mongodb+srv://hari:hari123@cluster0.uexfwlg.mongodb.net/Shopus
 })
 
 app.use(express.json());
-app.use(cors({ origin: ['http://localhost:5000'] }));
+app.use(cors({ origin: '*' }));
 app.use(morgan("dev"));
 app.use('/uploads', express.static('uploads'))
 
